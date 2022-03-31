@@ -1,0 +1,359 @@
+---
+title: "keras_basics"
+author: "Anastasios Vlaikidis"
+date: "3/30/2022"
+output: html_document
+---
+
+```{r include=FALSE}
+library(tidyverse)
+library(data.table)
+library(keras)
+library(tidymodels)
+library(tensorflow)
+```
+
+## Import Data
+
+```{r}
+seed = 43111
+set.seed(seed)
+
+d <- fread("D:/DataAskiseis/New_Disq_Functions/malakas_2.csv",
+           header = F,
+           nrows = 800000,
+           skip = 1700000
+) %>% rename("Target" = "V113")
+
+
+
+d <- d %>%
+  select(1:113)
+
+fact <- function(x) {
+  x = factor(x , levels = c("1","0"),
+                 labels = c("1","0"))
+}
+
+ts <- function(x) {
+  p1 = table(x)
+  p2 = str(x)
+  res = list(p1,p2)
+  print(res)
+}
+
+d <- d %>% 
+  map_at(.,.at = "Target", ~fact(.)) %>% 
+  as_tibble(.)
+
+
+ts(d$Target)
+```
+
+## Sample data
+
+```{r}
+set.seed(1821)
+
+df <- d %>% slice_sample(prop = .003)
+
+
+
+dim(df)
+
+df <-
+  df %>% 
+  mutate(Target = if_else(Target == "0", "Smooth","Anomaly") %>% 
+  as.factor() %>% 
+  relevel(ref = "Anomaly"))
+
+df %>% class
+```
+
+## Train , Test splits and basic prepocess
+
+```{r}
+
+df_split <- initial_split(
+  
+  df, 
+  prop = .75,
+  strata = Target
+  
+)
+
+
+# train and test set
+df_train <- training(df_split)
+df_test <- testing(df_split)
+
+# shufle data
+df_train <- df_train[sample(1:nrow(df_train)),]
+df_test <- df_test[sample(1:nrow(df_test)),]
+
+# basic preprocess
+basic_rec <-
+  recipe(Target~., data = df_train) %>%
+  step_YeoJohnson(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_range(all_numeric_predictors())
+
+
+
+# apply the recipe to the train and test data
+df_train <-
+  basic_rec %>%
+  prep() %>%
+  bake(new_data = df_train)
+
+
+df_test <-
+  basic_rec %>%
+  prep() %>%
+  bake(new_data = df_test)
+
+# CV folds
+cv_folds <- vfold_cv(
+  
+  df_train, 
+  strata = "Target",
+  v = 10,
+  repeats = 3
+  
+)
+
+df_train %>% dim()
+df_test %>% dim()
+df_train %>% class()
+df_test %>% class() 
+```
+
+## Split train and test sets into predictors and targets
+
+```{r}
+train_x <- df_train %>% select(-Target)
+train_y <- df_train %>% select(Target)
+test_x <- df_test %>% select(-Target)
+test_y <- df_test %>% select(Target)
+
+train_x %>% class()
+test_x %>% class()
+```
+
+## Keras autoencosers
+
+```{r}
+model_encoder <- keras_model_sequential()
+
+model_encoder %>%
+  layer_dense(units = 112, activation = "relu", input_shape = ncol(train_x)) %>%
+  layer_dense(units = 256, activation = "relu") %>%
+  layer_dense(units = 6, activation = "relu", name = "embedding") %>%
+  layer_dense(units = 256, activation = "relu") %>%
+  layer_dense(units = 112, activation = "relu") %>%
+  layer_dense(units = ncol(train_x))
+
+
+# model_encoder %>% 
+#   layer_dense(units = 112, activation = "relu", input_shape = ncol(train_x)) %>% 
+#  # layer_dense(units = 10, activation = "relu") %>% 
+#   layer_dense(units = 8, activation = "relu", name = "embedding") %>% 
+#  # layer_dense(units = 10, activation = "relu") %>% 
+#  # layer_dense(units = 56, activation = "relu") %>%
+#   layer_dense(units = ncol(train_x), name = "last_layer")
+
+
+
+model_encoder %>% compile(
+  loss = "mean_squared_error",
+  optimizer = "adam"
+)
+
+summary(model_encoder)
+
+
+autoencoder_hist <- keras::fit(
+  model_encoder,
+  x = as.matrix(train_x),
+  y = as.matrix(train_x),
+  epochs = 100,
+  batch_size = 32,
+  validation_split = .8,
+  options = callback_early_stopping(patience = 10)
+)
+
+model_encoder
+
+embeddings_model <- keras_model(
+  
+  inputs = model_encoder$input,
+  outputs = get_layer(model_encoder, "embedding")$output
+  
+)
+
+embeddings_model
+```
+
+## Make the new train and test data
+
+```{r}
+model_data <- predict(embeddings_model, as.matrix(train_x)) %>% as.data.frame()
+Target = train_y$Target
+model_data <- cbind(model_data, Target)
+
+
+test_set<- predict(embeddings_model, as.matrix(test_x)) %>% as.data.frame()
+Target = test_y$Target
+test_set <- cbind(test_set, Target)
+```
+
+## Build a model
+
+```{r}
+rcp <- recipe(Target~., data = model_data)
+
+# model
+  xgb_spec <-
+  boost_tree(
+    
+     trees = tune(),    
+     mtry = tune(),      
+     min_n = tune(),      
+     tree_depth = tune(),
+     learn_rate = tune(),
+     loss_reduction = tune(),
+     sample_size = tune()
+     
+  ) %>%
+set_engine("xgboost") %>%
+set_mode("classification") 
+
+# workflow
+xgb_wf <- 
+  workflow() %>%
+  add_recipe(rcp) %>%
+  add_model(xgb_spec) 
+```
+
+## Model tuning
+
+```{r}
+library(finetune)
+
+xgb_rs <- tune_race_anova(
+  
+  xgb_wf,
+  resamples = cv_folds,
+  grid = 6,
+  metrics = metric_set(roc_auc),
+  control = control_race(verbose_elim = TRUE)
+  
+)
+```
+
+## Collect results
+
+```{r}
+plot_race(xgb_rs)
+
+(number_of_all_models <- nrow(collect_metrics(xgb_rs, summarize = FALSE)))
+
+collect_metrics(xgb_rs)
+
+
+show_best(xgb_rs, "roc_auc")
+
+best_rs <- select_best(xgb_rs, "roc_auc")
+
+best_rs
+```
+
+## Finalize workflow
+
+```{r}
+best_wf <- finalize_workflow(xgb_wf, best_rs)
+best_wf
+```
+
+## Fit the model and make predictions on the new test set
+
+```{r}
+# fit the model
+model<- fit(best_wf, model_data)
+
+
+# make predictions
+Target = test_y$Target
+p <- predict(model, test_set) 
+caret::confusionMatrix(p$.pred_class, Target, mode = "everything")
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+## Cross validation
+set.seed(1821)
+
+keep_pred <- control_resamples(
+  
+  save_pred = TRUE, 
+  save_workflow = TRUE
+  
+)
+
+xgb_results <- 
+  best_wf %>% 
+  fit_resamples(
+    
+    resamples = cv_folds,
+    control = keep_pred
+)
+
+xgb_results
+collect_metrics(xgb_results)
+
+collect_predictions(xgb_results) %>%
+f_meas(truth = Target ,estimate = .pred_class)
+```
+
+## Load validation sets and make predictions
+
+```{r}
+# import data
+shock_4 <- fread("D:/DataAskiseis/New_v05/shock_4.csv", header = F)
+
+names(shock_4)[length(shock_4)] <- "Target"
+
+shock_4$Target <- factor(
+  
+                         shock_4$Target, 
+                         levels = c("1","0"),
+                         labels = c("Anomaly","Smooth")
+                        
+)
+
+shock_4 <- as_tibble(shock_4)
+
+# prepare data
+shock_4 <- 
+   recipe(Target~., data = shock_4) %>%
+   step_YeoJohnson(all_numeric_predictors()) %>%
+   step_normalize(all_numeric_predictors()) %>%
+   prep() %>%
+   bake(new_data = shock_4)
+
+x4 <- shock_4 %>% select(-Target)
+y4 <- shock_4 %>% select(Target)
+
+shock_4 <- predict(embeddings_model, as.matrix(x4)) %>% as.data.frame()
+Target = y4$Target
+shock_4 <- cbind(shock_4, Target)
+
+# make predictions
+m4<- fit(best_wf, shock_4)
+p4 <- predict(m4, shock_4)
+
+caret::confusionMatrix(p4$.pred_class, 
+                       shock_4 %>% pull(Target),
+                       mode = "everything")
+```
