@@ -8,8 +8,9 @@ The workflow combines reproducible preprocessing, neural-network representation 
 
 ## Repository contents
 
-- [`keras_basics.Rmd`](keras_basics.Rmd) — complete R Markdown workflow.
+- [`keras_autoencoder_pipeline.Rmd`](keras_autoencoder_pipeline.Rmd) — complete R Markdown workflow.
 - [`data/README.md`](data/README.md) — expected dataset layout and filenames.
+- [`.gitignore`](.gitignore) — local R/TensorFlow and raw-data exclusions.
 
 ## Methods and tools
 
@@ -22,31 +23,15 @@ The analysis uses:
 - `tidyverse` for data manipulation,
 - `caret` for confusion-matrix reporting.
 
-The pipeline includes:
-
-1. stratified train/test splitting,
-2. training-only Yeo-Johnson transformation, normalization and range scaling,
-3. dense autoencoder training with early stopping,
-4. extraction of a six-dimensional neural embedding,
-5. repeated cross-validation on the embedding dataset,
-6. XGBoost hyperparameter tuning,
-7. held-out test evaluation,
-8. external validation without re-fitting on validation data.
+The pipeline includes stratified train/test splitting, training-only preprocessing, autoencoder training with early stopping, six-dimensional embedding extraction, repeated cross-validation, XGBoost tuning, held-out test evaluation and external validation.
 
 ## Reproducibility and validation
 
-The source now uses project-relative data paths rather than machine-specific Windows paths. Preprocessing is fitted on the training data and reused unchanged for test and external-validation data. Cross-validation is performed on the learned embedding used by the downstream classifier, and the external validation set is evaluated with the already-trained model to avoid data leakage.
+The source uses project-relative paths instead of machine-specific Windows paths. Preprocessing is fitted on training data and reused for held-out and external-validation data, and the external validation set is evaluated with the already-trained classifier rather than refitting on validation data.
 
 ## Data requirements
 
 The raw datasets are not stored in the repository. Place them under the `data/` structure described in [`data/README.md`](data/README.md).
-
-## Running the analysis
-
-1. Install R and the R interface to TensorFlow/Keras.
-2. Install the packages loaded at the top of `keras_basics.Rmd`.
-3. Add the required data files under `data/`.
-4. Open the repository in RStudio and knit or run `keras_basics.Rmd` from top to bottom.
 
 ## Scope
 
