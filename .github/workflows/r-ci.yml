@@ -15,10 +15,12 @@ jobs:
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: "4.6.1"
-          use-public-rspm: true
-      - name: Install declared dependencies
+      - name: Install pak
         run: |
-          Rscript -e 'pkgs <- unique(c(readLines("R-packages.txt"), "knitr")); install.packages(pkgs, repos = "https://cloud.r-project.org")'
+          Rscript -e 'install.packages("pak", repos = sprintf("https://r-lib.github.io/p/pak/stable/%s/%s/%s", .Platform$pkgType, R.Version()$os, R.Version()$arch))'
+      - name: Install pinned dependencies
+        run: |
+          Rscript -e 'refs <- c(readLines("R-packages.txt"), "knitr@1.52"); pak::pkg_install(refs, upgrade = FALSE)'
       - name: Extract and parse R code
         run: |
           Rscript -e 'knitr::purl("keras_autoencoder_pipeline.Rmd", output = tempfile(fileext = ".R"), quiet = TRUE) |> parse()'
