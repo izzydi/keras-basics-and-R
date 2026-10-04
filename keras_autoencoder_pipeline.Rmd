@@ -6,11 +6,16 @@ output: html_document
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(data.table)
-library(keras)
+library(keras3)
 library(tidymodels)
-library(tensorflow)
 library(finetune)
 library(caret)
+tidymodels_prefer()
+
+# Keras 3 supports multiple backends; this project uses TensorFlow explicitly.
+use_backend("tensorflow")
+seed <- 43111
+set_random_seed(seed)
 ```
 
 ## Import data
@@ -18,9 +23,6 @@ library(caret)
 The analysis uses project-relative paths so it can be reproduced on another machine. See `data/README.md` for the expected files.
 
 ```{r}
-seed <- 43111
-set.seed(seed)
-
 data_path <- file.path("data", "wave_functions.csv")
 if (!file.exists(data_path)) {
   stop("Missing data/wave_functions.csv. See data/README.md for the expected layout.")
@@ -94,48 +96,56 @@ test_x <- df_test %>% select(-Target)
 test_y <- df_test %>% pull(Target)
 ```
 
-## Keras autoencoder
+## Keras 3 autoencoder
 
-The autoencoder is trained only on the training partition. Twenty percent of that partition is used internally for early-stopping validation.
+`set_random_seed()` seeds the R session, Python, NumPy and the selected Keras backend. The autoencoder is trained only on the training partition. Twenty percent of that partition is used internally for early-stopping validation.
 
 ```{r}
-model_encoder <- keras_model_sequential() %>%
-  layer_dense(units = 112, activation = "relu", input_shape = ncol(train_x)) %>%
-  layer_dense(units = 256, activation = "relu") %>%
-  layer_dense(units = 6, activation = "relu", name = "embedding") %>%
-  layer_dense(units = 256, activation = "relu") %>%
-  layer_dense(units = 112, activation = "relu") %>%
+set_random_seed(seed)
+
+model_encoder <- keras_model_sequential(input_shape = c(ncol(train_x))) |>
+  layer_dense(units = 112, activation = "relu") |>
+  layer_dense(units = 256, activation = "relu") |>
+  layer_dense(units = 6, activation = "relu", name = "embedding") |>
+  layer_dense(units = 256, activation = "relu") |>
+  layer_dense(units = 112, activation = "relu") |>
   layer_dense(units = ncol(train_x))
 
-model_encoder %>% compile(
+model_encoder |> compile(
   loss = "mean_squared_error",
   optimizer = "adam"
 )
 
-autoencoder_hist <- keras::fit(
-  model_encoder,
+autoencoder_hist <- model_encoder |> fit(
   x = as.matrix(train_x),
   y = as.matrix(train_x),
   epochs = 100,
   batch_size = 32,
   validation_split = 0.20,
-  callbacks = list(callback_early_stopping(patience = 10, restore_best_weights = TRUE))
+  callbacks = list(
+    callback_early_stopping(
+      patience = 10,
+      restore_best_weights = TRUE
+    )
+  ),
+  verbose = 2
 )
 
+embedding_layer <- get_layer(model_encoder, name = "embedding")
 embeddings_model <- keras_model(
-  inputs = model_encoder$input,
-  outputs = get_layer(model_encoder, "embedding")$output
+  inputs = model_encoder$inputs[[1]],
+  outputs = embedding_layer$output
 )
 ```
 
 ## Build embedding datasets
 
 ```{r}
-model_data <- predict(embeddings_model, as.matrix(train_x)) %>%
+model_data <- predict(embeddings_model, as.matrix(train_x), verbose = 0) %>%
   as.data.frame() %>%
   bind_cols(Target = train_y)
 
-test_set <- predict(embeddings_model, as.matrix(test_x)) %>%
+test_set <- predict(embeddings_model, as.matrix(test_x), verbose = 0) %>%
   as.data.frame() %>%
   bind_cols(Target = test_y)
 
@@ -172,7 +182,7 @@ xgb_wf <- workflow() %>%
 
 ## Model tuning
 
-Cross-validation tunes the classifier on a fixed representation learned from the training partition. The held-out test set remains untouched and is the primary unbiased evaluation set.
+Cross-validation tunes the classifier on a fixed representation learned from the training partition. Because the autoencoder is not re-trained inside each XGBoost fold, these resamples are used for **hyperparameter selection only**, not as an unbiased end-to-end performance estimate. The held-out test set remains the primary evaluation set.
 
 ```{r}
 set.seed(1821)
@@ -235,7 +245,11 @@ if (file.exists(validation_path)) {
   validation_x <- shock_4 %>% select(-Target)
   validation_y <- shock_4 %>% pull(Target)
 
-  validation_set <- predict(embeddings_model, as.matrix(validation_x)) %>%
+  validation_set <- predict(
+    embeddings_model,
+    as.matrix(validation_x),
+    verbose = 0
+  ) %>%
     as.data.frame() %>%
     bind_cols(Target = validation_y)
 
@@ -250,6 +264,10 @@ if (file.exists(validation_path)) {
   message("Optional validation file not found; skipping external validation.")
 }
 ```
+
+## Reproducibility note
+
+`set_random_seed()` controls the main R/Python/NumPy/backend random-number generators. Exact bit-for-bit reproducibility can still depend on hardware, backend version and non-deterministic accelerator operations, so environment versions should also be recorded when publishing benchmark numbers.
 
 ## Session information
 
