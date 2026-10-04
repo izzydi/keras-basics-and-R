@@ -1,0 +1,2 @@
+*.Rmd linguist-language=R linguist-detectable=true
+archive/** linguist-vendored
