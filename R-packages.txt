@@ -1,8 +1,7 @@
 tidyverse
 data.table
-keras
+keras3
 tidymodels
-tensorflow
 finetune
 caret
 xgboost
