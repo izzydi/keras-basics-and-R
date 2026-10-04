@@ -18,7 +18,7 @@ The workflow combines training-only preprocessing, neural-network representation
 
 The pipeline creates a stratified held-out test set **before** learned preprocessing. The preprocessing recipe and autoencoder are fitted using training data only. The autoencoder uses 20% of the training partition for early stopping, and its best weights are restored before embeddings are extracted.
 
-XGBoost cross-validation tunes the classifier on a fixed representation learned from the training partition. Because representation learning is not repeated inside every classifier fold, the cross-validation values are used for **hyperparameter selection rather than as the final end-to-end performance estimate**. The untouched held-out test set is the primary evaluation set.
+The downstream XGBoost classifier uses a **fixed, pre-specified baseline configuration**. It is not tuned by cross-validation on an embedding that has already been learned from the complete outer training partition. This removes the earlier validation-boundary mismatch and leaves the untouched held-out test set as the single performance-evaluation set.
 
 Optional external validation data are transformed using the already-fitted preprocessing recipe, autoencoder and classifier; the workflow does not refit on validation data.
 
@@ -26,13 +26,13 @@ Optional external validation data are transformed using the already-fitted prepr
 
 The direct R package versions are pinned in [`R-packages.txt`](R-packages.txt). CI uses R 4.6.1 and `pak` to install those exact direct versions, then extracts and parses the canonical R Markdown source.
 
-The workflow uses `keras3::set_random_seed()` so the main R, Python, NumPy and backend random-number generators are seeded together. Exact bit-for-bit neural-network results can still depend on the resolved Python Keras/TensorFlow backend, hardware and accelerator operations. The R package manifest therefore improves reproducibility without overstating full backend determinism.
+The workflow uses `keras3::set_random_seed()` so the main R, Python, NumPy and backend random-number generators are seeded together. XGBoost is also run single-threaded with a fixed seed. Exact bit-for-bit neural-network results can still depend on the resolved Python Keras/TensorFlow backend, hardware and accelerator operations. The R package manifest therefore improves reproducibility without overstating full backend determinism.
 
 `R-packages.txt` pins direct R dependencies; it is not a complete `renv.lock` for recursive R dependencies or a Python backend lockfile.
 
 ## Methods and tools
 
-The analysis uses `keras3` with a TensorFlow backend for representation learning, `tidymodels` and `finetune` for resampling and tuning, XGBoost for classification, `data.table` for efficient loading and `caret` for confusion-matrix reporting.
+The analysis uses `keras3` with a TensorFlow backend for representation learning, `tidymodels` for splitting/preprocessing/workflow construction, XGBoost for a fixed downstream classification baseline, `data.table` for efficient loading and `caret` for confusion-matrix reporting.
 
 ## Data requirements
 
@@ -54,4 +54,4 @@ pak::pkg_install(readLines("R-packages.txt"), upgrade = FALSE)
 
 ## Scope
 
-This project demonstrates representation learning with explicit train/test boundaries. It is a data-science portfolio project rather than a production inference service.
+This project demonstrates representation learning with explicit train/test boundaries and a deliberately fixed downstream baseline. It is a data-science portfolio project rather than a production inference service.
