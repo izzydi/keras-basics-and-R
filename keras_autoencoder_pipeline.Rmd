@@ -8,7 +8,6 @@ library(tidyverse)
 library(data.table)
 library(keras3)
 library(tidymodels)
-library(finetune)
 library(caret)
 tidymodels_prefer()
 
@@ -116,7 +115,7 @@ model_encoder |> compile(
   optimizer = "adam"
 )
 
-autoencoder_hist <- model_encoder |> fit(
+training_history <- model_encoder |> fit(
   x = as.matrix(train_x),
   y = as.matrix(train_x),
   epochs = 100,
@@ -131,6 +130,8 @@ autoencoder_hist <- model_encoder |> fit(
   verbose = 2
 )
 
+print(training_history)
+
 embedding_layer <- get_layer(model_encoder, name = "embedding")
 embeddings_model <- keras_model(
   inputs = model_encoder$inputs[[1]],
@@ -140,6 +141,8 @@ embeddings_model <- keras_model(
 
 ## Build embedding datasets
 
+The autoencoder is fitted only on the outer training partition. The held-out test rows are passed through the already-trained encoder and do not influence representation learning.
+
 ```{r}
 model_data <- predict(embeddings_model, as.matrix(train_x), verbose = 0) %>%
   as.data.frame() %>%
@@ -148,65 +151,38 @@ model_data <- predict(embeddings_model, as.matrix(train_x), verbose = 0) %>%
 test_set <- predict(embeddings_model, as.matrix(test_x), verbose = 0) %>%
   as.data.frame() %>%
   bind_cols(Target = test_y)
-
-set.seed(1821)
-cv_folds <- vfold_cv(
-  model_data,
-  strata = Target,
-  v = 10,
-  repeats = 3
-)
 ```
 
-## XGBoost model
+## Fixed XGBoost baseline
+
+The downstream classifier uses a deliberately **fixed, pre-specified configuration** rather than tuning hyperparameters with cross-validation on an embedding learned from all outer-training rows. This removes the earlier mismatch where classifier validation folds had already influenced unsupervised preprocessing/representation learning. The held-out test set is the only performance-evaluation set.
 
 ```{r}
-rcp <- recipe(Target ~ ., data = model_data)
+embedding_predictors <- ncol(model_data) - 1L
 
 xgb_spec <- boost_tree(
-  trees = tune(),
-  mtry = tune(),
-  min_n = tune(),
-  tree_depth = tune(),
-  learn_rate = tune(),
-  loss_reduction = tune(),
-  sample_size = tune()
+  trees = 500,
+  mtry = embedding_predictors,
+  min_n = 5,
+  tree_depth = 4,
+  learn_rate = 0.05,
+  loss_reduction = 0,
+  sample_size = 0.80
 ) %>%
-  set_engine("xgboost") %>%
+  set_engine("xgboost", nthread = 1, seed = 1821) %>%
   set_mode("classification")
 
 xgb_wf <- workflow() %>%
-  add_recipe(rcp) %>%
+  add_recipe(recipe(Target ~ ., data = model_data)) %>%
   add_model(xgb_spec)
-```
 
-## Model tuning
-
-Cross-validation tunes the classifier on a fixed representation learned from the training partition. Because the autoencoder is not re-trained inside each XGBoost fold, these resamples are used for **hyperparameter selection only**, not as an unbiased end-to-end performance estimate. The held-out test set remains the primary evaluation set.
-
-```{r}
 set.seed(1821)
-xgb_rs <- tune_race_anova(
-  xgb_wf,
-  resamples = cv_folds,
-  grid = 6,
-  metrics = metric_set(roc_auc),
-  control = control_race(verbose_elim = TRUE)
-)
-
-plot_race(xgb_rs)
-collect_metrics(xgb_rs)
-show_best(xgb_rs, "roc_auc")
-
-best_rs <- select_best(xgb_rs, "roc_auc")
-best_wf <- finalize_workflow(xgb_wf, best_rs)
+model <- fit(xgb_wf, data = model_data)
 ```
 
 ## Held-out test evaluation
 
 ```{r}
-model <- fit(best_wf, data = model_data)
-
 test_predictions <- predict(model, test_set)
 
 caret::confusionMatrix(
@@ -267,7 +243,7 @@ if (file.exists(validation_path)) {
 
 ## Reproducibility note
 
-`set_random_seed()` controls the main R/Python/NumPy/backend random-number generators. Exact bit-for-bit reproducibility can still depend on hardware, backend version and non-deterministic accelerator operations, so environment versions should also be recorded when publishing benchmark numbers.
+`set_random_seed()` controls the main R/Python/NumPy/backend random-number generators, and XGBoost is run single-threaded with a fixed seed. Exact bit-for-bit neural-network reproducibility can still depend on hardware, backend version and non-deterministic accelerator operations, so environment versions should also be recorded when publishing benchmark numbers.
 
 ## Session information
 
