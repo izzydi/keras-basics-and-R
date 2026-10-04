@@ -1,7 +1,5 @@
 ---
 title: "Keras Autoencoder and XGBoost Classification in R"
-author: "Anastasios Vlaikidis"
-date: "2022-03-30"
 output: html_document
 ---
 
@@ -24,6 +22,9 @@ seed <- 43111
 set.seed(seed)
 
 data_path <- file.path("data", "wave_functions.csv")
+if (!file.exists(data_path)) {
+  stop("Missing data/wave_functions.csv. See data/README.md for the expected layout.")
+}
 
 d <- fread(
   data_path,
@@ -31,8 +32,12 @@ d <- fread(
   nrows = 800000,
   skip = 1700000
 ) %>%
-  rename(Target = V113) %>%
-  select(1:113)
+  select(1:113) %>%
+  rename(Target = V113)
+
+if (ncol(d) != 113) {
+  stop("Expected 112 predictors plus one target column.")
+}
 
 as_target_factor <- function(x) {
   factor(x, levels = c("1", "0"), labels = c("1", "0"))
@@ -60,17 +65,14 @@ dim(df)
 
 ## Train/test split and preprocessing
 
-Preprocessing is fitted on the training set only and then applied unchanged to the test and validation sets.
+The held-out test set is created before any learned preprocessing. The recipe is fitted on training data only and then reused unchanged for test and external-validation data.
 
 ```{r}
+set.seed(1821)
 df_split <- initial_split(df, prop = 0.75, strata = Target)
 
 df_train <- training(df_split)
 df_test <- testing(df_split)
-
-set.seed(1821)
-df_train <- df_train[sample(seq_len(nrow(df_train))), ]
-df_test <- df_test[sample(seq_len(nrow(df_test))), ]
 
 basic_rec <- recipe(Target ~ ., data = df_train) %>%
   step_YeoJohnson(all_numeric_predictors()) %>%
@@ -87,12 +89,14 @@ df_test <- bake(basic_prep, new_data = df_test)
 
 ```{r}
 train_x <- df_train %>% select(-Target)
-train_y <- df_train %>% select(Target)
+train_y <- df_train %>% pull(Target)
 test_x <- df_test %>% select(-Target)
-test_y <- df_test %>% select(Target)
+test_y <- df_test %>% pull(Target)
 ```
 
 ## Keras autoencoder
+
+The autoencoder is trained only on the training partition. Twenty percent of that partition is used internally for early-stopping validation.
 
 ```{r}
 model_encoder <- keras_model_sequential() %>%
@@ -108,16 +112,14 @@ model_encoder %>% compile(
   optimizer = "adam"
 )
 
-summary(model_encoder)
-
 autoencoder_hist <- keras::fit(
   model_encoder,
   x = as.matrix(train_x),
   y = as.matrix(train_x),
   epochs = 100,
   batch_size = 32,
-  validation_split = 0.8,
-  callbacks = list(callback_early_stopping(patience = 10))
+  validation_split = 0.20,
+  callbacks = list(callback_early_stopping(patience = 10, restore_best_weights = TRUE))
 )
 
 embeddings_model <- keras_model(
@@ -131,11 +133,11 @@ embeddings_model <- keras_model(
 ```{r}
 model_data <- predict(embeddings_model, as.matrix(train_x)) %>%
   as.data.frame() %>%
-  bind_cols(Target = train_y$Target)
+  bind_cols(Target = train_y)
 
 test_set <- predict(embeddings_model, as.matrix(test_x)) %>%
   as.data.frame() %>%
-  bind_cols(Target = test_y$Target)
+  bind_cols(Target = test_y)
 
 set.seed(1821)
 cv_folds <- vfold_cv(
@@ -170,6 +172,8 @@ xgb_wf <- workflow() %>%
 
 ## Model tuning
 
+Cross-validation tunes the classifier on a fixed representation learned from the training partition. The held-out test set remains untouched and is the primary unbiased evaluation set.
+
 ```{r}
 set.seed(1821)
 xgb_rs <- tune_race_anova(
@@ -188,7 +192,7 @@ best_rs <- select_best(xgb_rs, "roc_auc")
 best_wf <- finalize_workflow(xgb_wf, best_rs)
 ```
 
-## Test-set evaluation
+## Held-out test evaluation
 
 ```{r}
 model <- fit(best_wf, data = model_data)
@@ -202,37 +206,53 @@ caret::confusionMatrix(
 )
 ```
 
-## External validation
+## Optional external validation
 
-The validation data are transformed with the preprocessing object fitted on the training data. The trained classifier is then used directly; it is **not re-fitted on the validation set**.
+If `data/validation/shock_4.csv` is available, it is transformed with the preprocessing object fitted on the training data and evaluated with the already-trained autoencoder and classifier. Nothing is re-fitted on validation data.
 
 ```{r}
 validation_path <- file.path("data", "validation", "shock_4.csv")
 
-shock_4 <- fread(validation_path, header = FALSE)
-names(shock_4)[ncol(shock_4)] <- "Target"
+if (file.exists(validation_path)) {
+  shock_4 <- fread(validation_path, header = FALSE)
 
-shock_4$Target <- factor(
-  shock_4$Target,
-  levels = c("1", "0"),
-  labels = c("Anomaly", "Smooth")
-)
+  if (ncol(shock_4) < 113) {
+    stop("Validation data must contain 112 predictors plus one target column.")
+  }
 
-shock_4 <- as_tibble(shock_4)
-shock_4 <- bake(basic_prep, new_data = shock_4)
+  shock_4 <- shock_4[, 1:113]
+  names(shock_4)[113] <- "Target"
 
-validation_x <- shock_4 %>% select(-Target)
-validation_y <- shock_4$Target
+  shock_4$Target <- factor(
+    shock_4$Target,
+    levels = c("1", "0"),
+    labels = c("Anomaly", "Smooth")
+  )
 
-validation_set <- predict(embeddings_model, as.matrix(validation_x)) %>%
-  as.data.frame() %>%
-  bind_cols(Target = validation_y)
+  shock_4 <- as_tibble(shock_4)
+  shock_4 <- bake(basic_prep, new_data = shock_4)
 
-validation_predictions <- predict(model, validation_set)
+  validation_x <- shock_4 %>% select(-Target)
+  validation_y <- shock_4 %>% pull(Target)
 
-caret::confusionMatrix(
-  validation_predictions$.pred_class,
-  validation_set$Target,
-  mode = "everything"
-)
+  validation_set <- predict(embeddings_model, as.matrix(validation_x)) %>%
+    as.data.frame() %>%
+    bind_cols(Target = validation_y)
+
+  validation_predictions <- predict(model, validation_set)
+
+  caret::confusionMatrix(
+    validation_predictions$.pred_class,
+    validation_set$Target,
+    mode = "everything"
+  )
+} else {
+  message("Optional validation file not found; skipping external validation.")
+}
+```
+
+## Session information
+
+```{r}
+sessionInfo()
 ```
