@@ -1,14 +1,42 @@
-# keras-basics-and-R
+# Autoencoders with Keras in R
 
-Keras is a popular deep learning library that provides a user-friendly API for building and training deep neural networks. 
-It is written in Python and supports various backends such as TensorFlow, Theano, and CNTK.
+An R-based deep-learning project that uses **Keras/TensorFlow autoencoders** to learn a compact representation of a high-dimensional dataset and then uses the learned embedding for downstream classification.
 
-In R, the Keras library provides an interface to the Keras API, allowing users to build and train deep learning models using R syntax. 
-Keras in R supports many of the same features as the Python version, including the ability to build various types of neural networks, apply different types of activation functions, use various types of optimizers, and perform data preprocessing.
+## Project overview
 
-The Keras package in R provides various functions to build and train deep learning models, including keras_model_sequential() to create a sequential model, 
-layer_dense() to add a dense layer to the model, layer_conv_2d() to add a convolutional layer, and many more. 
-Additionally, Keras in R provides functions to compile the model with the chosen optimizer and loss function, and functions to train and evaluate the model.
+The workflow combines modern preprocessing, neural-network representation learning and supervised modelling. A dense autoencoder compresses 112 numeric predictors into a low-dimensional embedding, which is then used as the feature space for a classification model.
 
-Keras in R also supports other advanced features such as early stopping, data augmentation, and transfer learning. 
-Overall, Keras in R is a powerful tool for building and training deep learning models using R syntax.
+## Repository contents
+
+- [`keras_basics.Rmd`](keras_basics.Rmd) — complete R Markdown workflow.
+
+## Methods and tools
+
+The analysis uses:
+
+- `keras` and `tensorflow` for the autoencoder,
+- `tidymodels` for preprocessing, splitting and modelling,
+- `data.table` for efficient data loading,
+- `tidyverse` for data manipulation.
+
+Key steps include:
+
+- stratified train/test splitting,
+- Yeo-Johnson transformation and normalization,
+- dense autoencoder training with early stopping,
+- extraction of the neural-network embedding,
+- supervised modelling on the learned features.
+
+## Data requirements
+
+The R Markdown file references a large local CSV file via a machine-specific absolute path. The dataset is not committed to this repository, so that path must be updated before reproduction.
+
+## Reproducing the analysis
+
+1. Install R, TensorFlow/Keras for R and the packages listed in the source file.
+2. Update the data path in `keras_basics.Rmd`.
+3. Open the project in RStudio and run or knit the document.
+
+## Scope
+
+This repository demonstrates representation learning with autoencoders in R and the integration of deep features with a traditional supervised-learning workflow.
