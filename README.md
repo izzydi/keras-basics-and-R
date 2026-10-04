@@ -9,8 +9,9 @@ The workflow combines training-only preprocessing, neural-network representation
 ## Repository contents
 
 - [`keras_autoencoder_pipeline.Rmd`](keras_autoencoder_pipeline.Rmd) — audited R Markdown workflow.
-- [`data/README.md`](data/README.md) — expected dataset layout and filenames.
-- [`R-packages.txt`](R-packages.txt) — direct R package dependencies.
+- [`data/README.md`](data/README.md) — expected dataset layout and provenance note.
+- [`R-packages.txt`](R-packages.txt) — version-pinned direct R package dependencies.
+- [`.github/workflows/r-ci.yml`](.github/workflows/r-ci.yml) — R 4.6.1 dependency/syntax CI.
 - [`.gitignore`](.gitignore) — local R/Keras and raw-data exclusions.
 
 ## Validation design
@@ -23,7 +24,11 @@ Optional external validation data are transformed using the already-fitted prepr
 
 ## Reproducibility
 
-The workflow uses `keras3::set_random_seed()` so the main R, Python, NumPy and backend random-number generators are seeded together. Exact bit-for-bit results can still depend on hardware and package/backend versions, especially with accelerator operations.
+The direct R package versions are pinned in [`R-packages.txt`](R-packages.txt). CI uses R 4.6.1 and `pak` to install those exact direct versions, then extracts and parses the canonical R Markdown source.
+
+The workflow uses `keras3::set_random_seed()` so the main R, Python, NumPy and backend random-number generators are seeded together. Exact bit-for-bit neural-network results can still depend on the resolved Python Keras/TensorFlow backend, hardware and accelerator operations. The R package manifest therefore improves reproducibility without overstating full backend determinism.
+
+`R-packages.txt` pins direct R dependencies; it is not a complete `renv.lock` for recursive R dependencies or a Python backend lockfile.
 
 ## Methods and tools
 
@@ -35,10 +40,17 @@ The raw datasets are not stored in this repository. Place them under the `data/`
 
 ## Running the analysis
 
-1. Install R packages listed in [`R-packages.txt`](R-packages.txt).
-2. Install the Keras backend once with `keras3::install_keras(backend = "tensorflow")`.
-3. Place the dataset under `data/`.
-4. Run or knit `keras_autoencoder_pipeline.Rmd` from top to bottom.
+1. Install R 4.6.1.
+2. Install `pak` and the pinned direct R dependencies:
+
+```r
+install.packages("pak")
+pak::pkg_install(readLines("R-packages.txt"), upgrade = FALSE)
+```
+
+3. Install/configure the TensorFlow backend with `keras3::install_keras(backend = "tensorflow")` if it is not already available.
+4. Place the dataset under `data/`.
+5. Run or knit `keras_autoencoder_pipeline.Rmd` from top to bottom.
 
 ## Scope
 
