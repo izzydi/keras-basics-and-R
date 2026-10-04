@@ -4,35 +4,31 @@ An R-based deep-learning project that uses a **Keras/TensorFlow autoencoder** to
 
 ## Project overview
 
-The workflow combines reproducible preprocessing, neural-network representation learning and supervised classification. A dense autoencoder compresses 112 numeric predictors into a six-dimensional embedding, which is then used as the feature space for model tuning and evaluation.
+The workflow combines reproducible preprocessing, neural-network representation learning and supervised classification. A dense autoencoder compresses 112 numeric predictors into a six-dimensional embedding, which becomes the feature space for downstream classification.
 
 ## Repository contents
 
-- [`keras_autoencoder_pipeline.Rmd`](keras_autoencoder_pipeline.Rmd) — complete R Markdown workflow.
+- [`keras_autoencoder_pipeline.Rmd`](keras_autoencoder_pipeline.Rmd) — audited R Markdown workflow.
 - [`data/README.md`](data/README.md) — expected dataset layout and filenames.
+- [`R-packages.txt`](R-packages.txt) — direct R package dependencies.
 - [`.gitignore`](.gitignore) — local R/TensorFlow and raw-data exclusions.
+
+## Validation design
+
+The pipeline creates a stratified held-out test set **before** learned preprocessing. The preprocessing recipe and autoencoder are fitted using training data only. The autoencoder uses 20% of the training partition for early stopping, and its best weights are restored before embeddings are extracted.
+
+XGBoost cross-validation tunes the classifier on the fixed representation learned from the training partition. Because representation learning is not repeated inside every classifier fold, the cross-validation estimate is used for tuning rather than as the final performance claim. The untouched held-out test set is the primary evaluation set.
+
+Optional external validation data are transformed using the already-fitted preprocessing recipe, autoencoder and classifier; the workflow does not refit on validation data.
 
 ## Methods and tools
 
-The analysis uses:
-
-- `keras` and `tensorflow` for representation learning,
-- `tidymodels` and `finetune` for preprocessing, resampling and tuning,
-- `xgboost` through tidymodels for classification,
-- `data.table` for efficient data loading,
-- `tidyverse` for data manipulation,
-- `caret` for confusion-matrix reporting.
-
-The pipeline includes stratified train/test splitting, training-only preprocessing, autoencoder training with early stopping, six-dimensional embedding extraction, repeated cross-validation, XGBoost tuning, held-out test evaluation and external validation.
-
-## Reproducibility and validation
-
-The source uses project-relative paths instead of machine-specific Windows paths. Preprocessing is fitted on training data and reused for held-out and external-validation data, and the external validation set is evaluated with the already-trained classifier rather than refitting on validation data.
+The analysis uses `keras`/`tensorflow` for representation learning, `tidymodels` and `finetune` for resampling and tuning, XGBoost for classification, `data.table` for efficient loading and `caret` for confusion-matrix reporting.
 
 ## Data requirements
 
-The raw datasets are not stored in the repository. Place them under the `data/` structure described in [`data/README.md`](data/README.md).
+The raw datasets are not stored in this repository. Place them under the `data/` structure described in [`data/README.md`](data/README.md). The external validation file is optional; the main train/test workflow runs without it.
 
 ## Scope
 
-This project demonstrates representation learning, careful train/test separation and integration of deep features with a conventional supervised-learning pipeline. It is maintained as a data-science portfolio project rather than a production inference service.
+This project demonstrates representation learning with explicit train/test boundaries. It is a data-science portfolio project rather than a production inference service.
