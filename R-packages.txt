@@ -1,0 +1,8 @@
+tidyverse
+data.table
+keras
+tidymodels
+tensorflow
+finetune
+caret
+xgboost
